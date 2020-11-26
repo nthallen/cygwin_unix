@@ -8,6 +8,8 @@
 #include <strings.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <stdbool.h>
 
 #define MAXPENDING 5
 
@@ -15,9 +17,71 @@ void die(const char *msg, int errorno) {
   if (errorno == 0) {
     fprintf(stderr, "%s\n", msg);
   } else {
-    fprintf(stderr, "%s: %s\n", msg, strerror(errorno));
+    fprintf(stderr, "%s: %d=%s\n", msg, errorno, strerror(errorno));
   }
   exit(1);
+}
+
+int select_accept(int listener, int client1) {
+  fd_set readfds, writefds, exceptfds;
+  int width, rc;
+  FD_ZERO(&readfds);
+  FD_ZERO(&writefds);
+  FD_ZERO(&exceptfds);
+  FD_SET(listener, &readfds);
+  if (client1 >= 0)
+    FD_SET(client1, &readfds);
+  width = listener+1;
+  rc = select(width, &readfds, &writefds, &exceptfds, 0);
+  if (rc == 0) die("select() returned 0", 0);
+  if (rc < 0) die("select() returned error", errno);
+  if (FD_ISSET(listener, &readfds)) {
+    int fd = accept(listener, NULL, NULL);
+    if (fd < 0) die("accept() failed after select", errno);
+    return fd;
+  } else die("select() returned > 0, but did not set our bit", 0);
+}
+
+void select_read(int listener, int client1, int client2) {
+  fd_set readfds, writefds, exceptfds;
+  int width, rc, fd;
+  char ibuf[80];
+  int nc;
+  const char *who;
+  bool client1_ready = false;
+  bool client2_ready = false;
+  FD_ZERO(&readfds);
+  FD_ZERO(&writefds);
+  FD_ZERO(&exceptfds);
+  FD_SET(listener, &readfds);
+  FD_SET(client1, &readfds);
+  FD_SET(client2, &readfds);
+  width = ((client1>client2) ? client1 : client2)+1;
+  rc = select(width, &readfds, &writefds, &exceptfds, 0);
+  if (rc == 0) die("select() returned 0", 0);
+  if (rc < 0) die("select() returned error", errno);
+  client1_ready = FD_ISSET(client1, &readfds);
+  client2_ready = FD_ISSET(client2, &readfds);
+  if (FD_ISSET(listener, &readfds))
+    die("Unexpected ready from listener",0);
+  if (client1_ready) {
+    fd = client1;
+    who = "client1";
+    if (client2_ready) {
+      fprintf(stderr, "Both client1 and client2 reporting ready\n");
+    }
+  } else if (client2_ready) {
+    fd = client2;
+    who = "client2";
+  }
+  else die("select() returned > 0, but did not set our bits", 0);
+  nc = read(fd, ibuf, 80);
+  if (nc < 0) die("read() failed", errno);
+  if (nc == 0) {
+    fprintf(stderr, "read from %s returned zero\n", who);
+    exit(1);
+  }
+  printf("Read from %s returned %d bytes\n", who, nc);
 }
 
 void server(const char *svc_name) {
@@ -29,24 +93,20 @@ void server(const char *svc_name) {
     die("socket(AF_UNIX, SOCK_STREAM, 0) failed", errno);
   local.sun_family = AF_UNIX;
   strncpy(local.sun_path, svc_name, UNIX_PATH_MAX);
-  // if (fcntl(listener, F_SETFL, fcntl(listener, F_GETFL, 0) | O_NONBLOCK) == -1)
-    // die("fcntl() failure server()", errno);
+  if (fcntl(listener, F_SETFL, fcntl(listener, F_GETFL, 0) | O_NONBLOCK) == -1)
+    die("fcntl() failure server()", errno);
   unlink(local.sun_path);
   if (bind(listener, (struct sockaddr *)&local, SUN_LEN(&local)) < 0)
     die("bind() failure in server()", errno);
   if (listen(listener, MAXPENDING) < 0)
     die("listen() failure in server()", errno);
   printf("Server is listening\n");
-  int client1 = accept(listener, NULL, NULL);
-  if (client1 < 0) die("accept() #1 failed", errno);
-  int client2 = accept(listener, NULL, NULL);
-  if (client2 < 0) die("accept() #2 failed", errno);
+  int client1 = select_accept(listener, -1);
+  int client2 = select_accept(listener, client1);
   printf("Server accepted two client connections\n");
-  nc = read(client1, ibuf, 80);
-  if (nc < 0) die("read(client1) failed", errno);
-  nc = read(client2, ibuf, 80);
-  if (nc < 0) die("read(client2) failed", errno);
-  printf("Read from both connections\n");
+  select_read(listener, client1, client2);
+  select_read(listener, client1, client2);
+  printf("Read two times\n");
   close(client1);
   close(client2);
   close(listener);
