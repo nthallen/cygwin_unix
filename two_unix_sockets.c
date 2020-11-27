@@ -1,3 +1,14 @@
+/**
+ * two_unix_sockets.c
+ * This is supposed to be a minimal program to demonstrate
+ * a bug I am encountering.
+ * This program provides both a server and a client. Which runs
+ * depends on the command line argument of either server or client.
+ * You should run the server first in one terminal and then run the
+ * client. The program should run to completion if everything works.
+ * The failure mode I am seeing is that the server's call to accept()
+ * hangs.
+ */
 #include <errno.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -36,7 +47,9 @@ int select_accept(int listener, int client1) {
   if (rc == 0) die("select() returned 0", 0);
   if (rc < 0) die("select() returned error", errno);
   if (FD_ISSET(listener, &readfds)) {
-    int fd = accept(listener, NULL, NULL);
+    int fd;
+    printf("select() says we are ready for accept()\n");
+    fd = accept(listener, NULL, NULL);
     if (fd < 0) die("accept() failed after select", errno);
     return fd;
   } else die("select() returned > 0, but did not set our bit", 0);
@@ -44,12 +57,12 @@ int select_accept(int listener, int client1) {
 
 void select_read(int listener, int client1, int client2) {
   fd_set readfds, writefds, exceptfds;
-  int width, rc, fd;
+  int width, rc;
   char ibuf[80];
   int nc;
-  const char *who;
-  bool client1_ready = false;
-  bool client2_ready = false;
+  bool client1_ready;
+  bool client2_ready;
+  bool listener_ready;
   FD_ZERO(&readfds);
   FD_ZERO(&writefds);
   FD_ZERO(&exceptfds);
@@ -57,31 +70,28 @@ void select_read(int listener, int client1, int client2) {
   FD_SET(client1, &readfds);
   FD_SET(client2, &readfds);
   width = ((client1>client2) ? client1 : client2)+1;
-  rc = select(width, &readfds, &writefds, &exceptfds, 0);
+  rc = pselect(width, &readfds, &writefds, &exceptfds, 0, 0);
   if (rc == 0) die("select() returned 0", 0);
   if (rc < 0) die("select() returned error", errno);
   client1_ready = FD_ISSET(client1, &readfds);
   client2_ready = FD_ISSET(client2, &readfds);
-  if (FD_ISSET(listener, &readfds))
-    die("Unexpected ready from listener",0);
+  listener_ready = FD_ISSET(listener, &readfds);
+  if (rc > 1) {
+    printf("pselect reports client1:%s client2:%s listener:%s\n",
+      client1_ready ? "ready" : "not",
+      client2_ready ? "ready" : "not",
+      listener_ready ? "ready" : "not");
+  }
   if (client1_ready) {
-    fd = client1;
-    who = "client1";
-    if (client2_ready) {
-      fprintf(stderr, "Both client1 and client2 reporting ready\n");
-    }
-  } else if (client2_ready) {
-    fd = client2;
-    who = "client2";
+    nc = read(client1, ibuf, 80);
+    if (nc < 0) die("read() from client1 failed", errno);
+    printf("Read from %s returned %d bytes\n", "client1", nc);
   }
-  else die("select() returned > 0, but did not set our bits", 0);
-  nc = read(fd, ibuf, 80);
-  if (nc < 0) die("read() failed", errno);
-  if (nc == 0) {
-    fprintf(stderr, "read from %s returned zero\n", who);
-    exit(1);
+  if (client2_ready) {
+    nc = read(client2, ibuf, 80);
+    if (nc < 0) die("read() from client2 failed", errno);
+    printf("Read from %s returned %d bytes\n", "client2", nc);
   }
-  printf("Read from %s returned %d bytes\n", who, nc);
 }
 
 void server(const char *svc_name) {
@@ -113,6 +123,23 @@ void server(const char *svc_name) {
   printf("Server shutting down\n");
 }
 
+void client_pselect(int fd) {
+  fd_set readfds, writefds, exceptfds;
+  int width, rc;
+  bool client_ready;
+  FD_ZERO(&readfds);
+  FD_ZERO(&writefds);
+  FD_ZERO(&exceptfds);
+  FD_SET(fd, &readfds);
+  width = fd+1;
+  rc = pselect(width, &readfds, &writefds, &exceptfds, 0, 0);
+  if (rc == 0) die("select() returned 0", 0);
+  if (rc < 0) die("select() returned error", errno);
+  client_ready = FD_ISSET(fd, &readfds);
+  if (!client_ready)
+    die("pselect picked someone else!",0);
+}
+
 int client_connect(const char *svc_name) {
   struct sockaddr_un local;
   int client = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -120,10 +147,12 @@ int client_connect(const char *svc_name) {
     die("socket(AF_UNIX, SOCK_STREAM, 0) failed", errno);
   local.sun_family = AF_UNIX;
   strncpy(local.sun_path, svc_name, UNIX_PATH_MAX);
-  // if (fcntl(client, F_SETFL, fcntl(client, F_GETFL, 0) | O_NONBLOCK) == -1)
-    // die("fcntl() failure server()", errno);
-  if (connect(client, (struct sockaddr*)&local, SUN_LEN(&local)) < 0)
+  if (fcntl(client, F_SETFL, fcntl(client, F_GETFL, 0) | O_NONBLOCK) == -1)
+    die("fcntl() failure server()", errno);
+  if (connect(client, (struct sockaddr*)&local, SUN_LEN(&local)) < 0 &&
+      errno != EINPROGRESS)
     die("connect() failed", errno);
+  client_pselect(client);
   return client;
 }
 
@@ -135,6 +164,7 @@ void client(const char *svc_name) {
   client2 = client_connect(svc_name);
   printf("Two connections succeeded\n");
   write(client1, "hello", 6);
+  sleep(3);
   write(client2, "hello", 6);
   printf("Wrote to both connections\n");
   close(client1);
@@ -143,6 +173,7 @@ void client(const char *svc_name) {
 
 int main(int argc, char **argv) {
   const char *arg = "server";
+  // const char *service = "/var/run/monarch/scopex/tm_gen";
   const char *service = "service";
   if (argc > 1) arg = argv[1];
   if (strcasecmp(arg, "client") == 0) {
