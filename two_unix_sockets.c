@@ -95,9 +95,10 @@ void select_read(int listener, int client1, int client2) {
 }
 
 void server(const char *svc_name) {
-  char ibuf[80];
-  int nc;
+  // char ibuf[80];
+  // int nc;
   struct sockaddr_un local;
+  int client1, client2;
   int listener = socket(AF_UNIX, SOCK_STREAM, 0);
   if (listener < 0)
     die("socket(AF_UNIX, SOCK_STREAM, 0) failed", errno);
@@ -111,8 +112,8 @@ void server(const char *svc_name) {
   if (listen(listener, MAXPENDING) < 0)
     die("listen() failure in server()", errno);
   printf("Server is listening\n");
-  int client1 = select_accept(listener, -1);
-  int client2 = select_accept(listener, client1);
+  client1 = select_accept(listener, -1);
+  client2 = select_accept(listener, client1);
   printf("Server accepted two client connections\n");
   select_read(listener, client1, client2);
   select_read(listener, client1, client2);
