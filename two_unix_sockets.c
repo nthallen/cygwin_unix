@@ -35,7 +35,7 @@ void die(const char *msg, int errorno) {
 
 int select_accept(int listener, int client1) {
   fd_set readfds, writefds, exceptfds;
-  int width, rc;
+  int width, rc, fd;
   FD_ZERO(&readfds);
   FD_ZERO(&writefds);
   FD_ZERO(&exceptfds);
@@ -46,13 +46,12 @@ int select_accept(int listener, int client1) {
   rc = select(width, &readfds, &writefds, &exceptfds, 0);
   if (rc == 0) die("select() returned 0", 0);
   if (rc < 0) die("select() returned error", errno);
-  if (FD_ISSET(listener, &readfds)) {
-    int fd;
-    printf("select() says we are ready for accept()\n");
-    fd = accept(listener, NULL, NULL);
-    if (fd < 0) die("accept() failed after select", errno);
-    return fd;
-  } else die("select() returned > 0, but did not set our bit", 0);
+  if (!FD_ISSET(listener, &readfds))
+    die("select() returned > 0, but did not set our bit", 0);
+  printf("select() says we are ready for accept()\n");
+  fd = accept(listener, NULL, NULL);
+  if (fd < 0) die("accept() failed after select", errno);
+  return fd;
 }
 
 void select_read(int listener, int client1, int client2) {
