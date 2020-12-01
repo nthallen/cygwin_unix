@@ -140,7 +140,7 @@ void client_pselect(int fd) {
   rc = pselect(width, &readfds, &writefds, &exceptfds, 0, 0);
   if (rc == 0) die("select() returned 0", 0);
   if (rc < 0) die("select() returned error", errno);
-  client_ready = FD_ISSET(fd, &readfds);
+  client_ready = FD_ISSET(fd, &writefds);
   if (!client_ready)
     die("pselect picked someone else!",0);
 }
