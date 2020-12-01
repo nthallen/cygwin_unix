@@ -69,9 +69,11 @@ void select_read(int listener, int client1, int client2) {
   FD_ZERO(&writefds);
   FD_ZERO(&exceptfds);
   FD_SET(listener, &readfds);
+  width = listener+1;
   FD_SET(client1, &readfds);
+  if (client1+1 > width) width = client1+1;
   FD_SET(client2, &readfds);
-  width = ((client1>client2) ? client1 : client2)+1;
+  if (client2+1 > width) width = client2+1;
   rc = pselect(width, &readfds, &writefds, &exceptfds, 0, 0);
   if (rc == 0) die("select() returned 0", 0);
   if (rc < 0) die("select() returned error", errno);
@@ -133,7 +135,7 @@ void client_pselect(int fd) {
   FD_ZERO(&readfds);
   FD_ZERO(&writefds);
   FD_ZERO(&exceptfds);
-  FD_SET(fd, &readfds);
+  FD_SET(fd, &writefds);
   width = fd+1;
   rc = pselect(width, &readfds, &writefds, &exceptfds, 0, 0);
   if (rc == 0) die("select() returned 0", 0);
