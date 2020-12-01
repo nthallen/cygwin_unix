@@ -29,3 +29,9 @@ connect() to the server. The server's select() call returns, indicating that the
 listening socket is "read-ready". Then the server calls accept(), which then blocks.
 
 With some variations, accept() will return if the client is terminated (e.g. via ctrl-C).
+
+### Update 12/1/2020
+As of [fdbe7ed](https://github.com/nthallen/cygwin_unix/commit/fbde7ed94c85a7ef569f4b24f06db03b99a955a9),
+this no longer trips the bug on my system. Unfortunately the bugs fixed here are not
+present in my much larger application. I will try to further replecate the key pieces
+of that application here.
