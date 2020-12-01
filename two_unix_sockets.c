@@ -86,6 +86,7 @@ int select_read(int listener, int client1, int client2) {
     printf("Listener is ready for accept()\n");
     fd = accept(listener, NULL, NULL);
     if (fd < 0) die("accept() failed after select", errno);
+    printf("Client accepted\n");
   }
   return fd;
 }
@@ -98,13 +99,13 @@ int new_listener(const char *svc_name) {
   local.sun_family = AF_UNIX;
   strncpy(local.sun_path, svc_name, UNIX_PATH_MAX);
   if (fcntl(listener, F_SETFL, fcntl(listener, F_GETFL, 0) | O_NONBLOCK) == -1)
-    die("fcntl() failure server()", errno);
+    die("fcntl() failure in new_listener()", errno);
   unlink(local.sun_path);
   if (bind(listener, (struct sockaddr *)&local, SUN_LEN(&local)) < 0)
-    die("bind() failure in server()", errno);
+    die("bind() failure in new_listener()", errno);
   if (listen(listener, MAXPENDING) < 0)
-    die("listen() failure in server()", errno);
-  printf("Server is listening\n");
+    die("listen() failure in new_listener()", errno);
+  printf("Server '%s' is listening\n", svc_name);
   return listener;
 }
 
@@ -150,48 +151,53 @@ int client_connect(const char *svc_name) {
   return client;
 }
 
-void server(const char *svc_name) {
-  int client1, client2;
-  int listener = new_listener(svc_name);
-  client1 = select_read(listener, -1, -1);
-  client2 = select_read(listener, client1, -1);
-  if (client1 >= 0 && client2 >= 0)
-    printf("Server accepted two client connections\n");
-  select_read(listener, client1, client2);
-  select_read(listener, client1, client2);
+void server1(const char *svc1, const char *svc2) {
+  int client1, client2 = -1;
+  client1 = client_connect(svc2);
+  int listener = new_listener(svc1);
+  while (client2 < 0) {
+    client2 = select_read(listener, client1, client2);
+  }
+  for (int i = 0; i < 2; ++i) {
+    int client3 = select_read(listener, client1, client2);
+    if (client3 >= 0)
+      die("Unexpected extra client!", 0);
+  }
   printf("Read two times\n");
   if (client1 >= 0) close(client1);
   if (client2 >= 0) close(client2);
   if (listener >= 0) close(listener);
-  unlink(svc_name);
-  printf("Server shutting down\n");
+  unlink(svc1);
+  printf("Server %s shutting down\n", svc1);
 }
 
-void client(const char *svc_name) {
-  int client1, client2;
-  printf("Client is starting\n");
-  client1 = client_connect(svc_name);
-  printf("One connection succeeded\n");
-  client2 = client_connect(svc_name);
-  printf("Two connections succeeded\n");
+void server2(const char *svc1, const char *svc2) {
+  int listener = new_listener(svc2);
+  int client1 = select_read(listener, -1, -1);
   write(client1, "hello", 6);
-  sleep(3);
+
+  int client2 = client_connect(svc1);
+  write(client1, "hello", 6);
+  sleep(1);
   write(client2, "hello", 6);
   printf("Wrote to both connections\n");
   close(client1);
   close(client2);
+  close(listener);
+  unlink(svc2);
+  printf("Server %s shutting down\n", svc2);
 }
 
 int main(int argc, char **argv) {
   const char *arg = "server";
   // const char *service = "/var/run/monarch/scopex/tm_gen";
   const char *service1 = "service1";
-  // const char *service2 = "service2";
+  const char *service2 = "service2";
   if (argc > 1) arg = argv[1];
-  if (strcasecmp(arg, "client") == 0) {
-    client(service1);
-  } else if (strcasecmp(arg, "server") == 0) {
-    server(service1);
+  if (strcasecmp(arg, "server1") == 0) {
+    server1(service1, service2);
+  } else if (strcasecmp(arg, "server2") == 0) {
+    server2(service1, service2);
   } else {
     fprintf(stderr,"Unrecognized option\n");
     return 1;
