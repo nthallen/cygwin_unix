@@ -33,33 +33,13 @@ void die(const char *msg, int errorno) {
   exit(1);
 }
 
-int select_accept(int listener, int client1) {
-  fd_set readfds, writefds, exceptfds;
-  int width, rc, fd;
-  FD_ZERO(&readfds);
-  FD_ZERO(&writefds);
-  FD_ZERO(&exceptfds);
-  FD_SET(listener, &readfds);
-  width = listener+1;
-  if (client1 >= 0) {
-    FD_SET(client1, &readfds);
-    if (client1 + 1 > width)
-      width = client1+1;
-  }
-  rc = select(width, &readfds, &writefds, &exceptfds, 0);
-  if (rc == 0) die("select() returned 0", 0);
-  if (rc < 0) die("select() returned error", errno);
-  if (!FD_ISSET(listener, &readfds))
-    die("select() returned > 0, but did not set our bit", 0);
-  printf("select() says we are ready for accept()\n");
-  fd = accept(listener, NULL, NULL);
-  if (fd < 0) die("accept() failed after select", errno);
-  return fd;
-}
-
-void select_read(int listener, int client1, int client2) {
+/**
+ * @return -1 unless we accept a new client, in which case return the socket
+ */
+int select_read(int listener, int client1, int client2) {
   fd_set readfds, writefds, exceptfds;
   int width, rc;
+  int fd = -1;
   char ibuf[80];
   int nc;
   bool client1_ready;
@@ -68,12 +48,18 @@ void select_read(int listener, int client1, int client2) {
   FD_ZERO(&readfds);
   FD_ZERO(&writefds);
   FD_ZERO(&exceptfds);
-  FD_SET(listener, &readfds);
-  width = listener+1;
-  FD_SET(client1, &readfds);
-  if (client1+1 > width) width = client1+1;
-  FD_SET(client2, &readfds);
-  if (client2+1 > width) width = client2+1;
+  if (listener >= 0) {
+    FD_SET(listener, &readfds);
+    width = listener+1;
+  }
+  if (client1 >= 0) {
+    FD_SET(client1, &readfds);
+    if (client1+1 > width) width = client1+1;
+  }
+  if (client2 >= 0) {
+    FD_SET(client2, &readfds);
+    if (client2+1 > width) width = client2+1;
+  }
   rc = pselect(width, &readfds, &writefds, &exceptfds, 0, 0);
   if (rc == 0) die("select() returned 0", 0);
   if (rc < 0) die("select() returned error", errno);
@@ -96,13 +82,16 @@ void select_read(int listener, int client1, int client2) {
     if (nc < 0) die("read() from client2 failed", errno);
     printf("Read from %s returned %d bytes\n", "client2", nc);
   }
+  if (listener_ready) {
+    printf("Listener is ready for accept()\n");
+    fd = accept(listener, NULL, NULL);
+    if (fd < 0) die("accept() failed after select", errno);
+  }
+  return fd;
 }
 
-void server(const char *svc_name) {
-  // char ibuf[80];
-  // int nc;
+int new_listener(const char *svc_name) {
   struct sockaddr_un local;
-  int client1, client2;
   int listener = socket(AF_UNIX, SOCK_STREAM, 0);
   if (listener < 0)
     die("socket(AF_UNIX, SOCK_STREAM, 0) failed", errno);
@@ -116,16 +105,7 @@ void server(const char *svc_name) {
   if (listen(listener, MAXPENDING) < 0)
     die("listen() failure in server()", errno);
   printf("Server is listening\n");
-  client1 = select_accept(listener, -1);
-  client2 = select_accept(listener, client1);
-  printf("Server accepted two client connections\n");
-  select_read(listener, client1, client2);
-  select_read(listener, client1, client2);
-  printf("Read two times\n");
-  close(client1);
-  close(client2);
-  close(listener);
-  printf("Server shutting down\n");
+  return listener;
 }
 
 void client_pselect(int fd) {
@@ -154,11 +134,37 @@ int client_connect(const char *svc_name) {
   strncpy(local.sun_path, svc_name, UNIX_PATH_MAX);
   if (fcntl(client, F_SETFL, fcntl(client, F_GETFL, 0) | O_NONBLOCK) == -1)
     die("fcntl() failure server()", errno);
-  if (connect(client, (struct sockaddr*)&local, SUN_LEN(&local)) < 0 &&
-      errno != EINPROGRESS)
-    die("connect() failed", errno);
-  client_pselect(client);
+  for (;;) {
+    if (connect(client, (struct sockaddr*)&local, SUN_LEN(&local)) < 0) {
+      if (errno == ENOENT) {
+        printf("Waiting for service '%s'\n", svc_name);
+        sleep(1);
+      } else if (errno == EINPROGRESS) {
+        client_pselect(client);
+        break;
+      } else {
+        die("connect() failed before select", errno);
+      }
+    }
+  }
   return client;
+}
+
+void server(const char *svc_name) {
+  int client1, client2;
+  int listener = new_listener(svc_name);
+  client1 = select_read(listener, -1, -1);
+  client2 = select_read(listener, client1, -1);
+  if (client1 >= 0 && client2 >= 0)
+    printf("Server accepted two client connections\n");
+  select_read(listener, client1, client2);
+  select_read(listener, client1, client2);
+  printf("Read two times\n");
+  if (client1 >= 0) close(client1);
+  if (client2 >= 0) close(client2);
+  if (listener >= 0) close(listener);
+  unlink(svc_name);
+  printf("Server shutting down\n");
 }
 
 void client(const char *svc_name) {
@@ -179,12 +185,13 @@ void client(const char *svc_name) {
 int main(int argc, char **argv) {
   const char *arg = "server";
   // const char *service = "/var/run/monarch/scopex/tm_gen";
-  const char *service = "service";
+  const char *service1 = "service1";
+  // const char *service2 = "service2";
   if (argc > 1) arg = argv[1];
   if (strcasecmp(arg, "client") == 0) {
-    client(service);
+    client(service1);
   } else if (strcasecmp(arg, "server") == 0) {
-    server(service);
+    server(service1);
   } else {
     fprintf(stderr,"Unrecognized option\n");
     return 1;
