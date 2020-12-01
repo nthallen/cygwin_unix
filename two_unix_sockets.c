@@ -40,9 +40,12 @@ int select_accept(int listener, int client1) {
   FD_ZERO(&writefds);
   FD_ZERO(&exceptfds);
   FD_SET(listener, &readfds);
-  if (client1 >= 0)
-    FD_SET(client1, &readfds);
   width = listener+1;
+  if (client1 >= 0) {
+    FD_SET(client1, &readfds);
+    if (client1 + 1 > width)
+      width = client1+1;
+  }
   rc = select(width, &readfds, &writefds, &exceptfds, 0);
   if (rc == 0) die("select() returned 0", 0);
   if (rc < 0) die("select() returned error", errno);
