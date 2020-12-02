@@ -22,6 +22,10 @@
 #include <fcntl.h>
 #include <stdbool.h>
 
+#ifndef UNIX_PATH_MAX
+#define UNIX_PATH_MAX 108
+#endif
+
 #define MAXPENDING 5
 
 class nb_app {

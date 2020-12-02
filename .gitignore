@@ -1,2 +1,6 @@
 *.exe
 *.log
+*.swp
+two_unix_sockets
+client
+rapid_connects

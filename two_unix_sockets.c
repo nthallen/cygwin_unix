@@ -24,6 +24,10 @@
 
 #define MAXPENDING 5
 
+#ifndef UNIX_PATH_MAX
+#define UNIX_PATH_MAX 108
+#endif
+
 void die(const char *msg, int errorno) {
   if (errorno == 0) {
     fprintf(stderr, "%s\n", msg);
