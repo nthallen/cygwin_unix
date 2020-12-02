@@ -35,3 +35,20 @@ As of [fdbe7ed](https://github.com/nthallen/cygwin_unix/commit/fbde7ed94c85a7ef5
 this no longer trips the bug on my system. Unfortunately the bugs fixed here are not
 present in my much larger application. I will try to further replecate the key pieces
 of that application here.
+
+### Update 12/2/2020
+After paring the main application down and back up, I finally narrowed in on the condition
+that was causing this blocking behavior. The issue arises when a client connect()s twice
+to the same server with non-blocking unix-domain sockets before calling select().
+
+There are a few pieces to this. With the client configured to connect() just once, I can
+see that the server's select() returns as soon connect() is called, but then accept()
+blocks until the client calls select(). That is not proper non-blocking behavior, but it
+appears that the implementation under Cygwin does require that client and server
+both be communicating synchronously to accomplish the connect() operation.
+
+I tried running this under Ubuntu 16.04 and found that connect() succeeded immediately, so
+no subsequent select() is required, and there does not appear to be a possibility for this
+collision. Perhaps that is because Linux ignores the non-blocking flag for the connect.
+
+I will attempt to force the question by delaying calling select() on the server.
