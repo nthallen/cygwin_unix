@@ -52,3 +52,9 @@ no subsequent select() is required, and there does not appear to be a possibilit
 collision. Perhaps that is because Linux ignores the non-blocking flag for the connect.
 
 I will attempt to force the question by delaying calling select() on the server.
+
+The behavior under Linux (Ubuntu 16.04) is that connect() returns with no error
+immediately, regardless of whether the server is in select() or accept() or not.
+
+A workaround for this issue may be to keep the socket blocking until after connect().
+
