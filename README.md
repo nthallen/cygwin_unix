@@ -58,3 +58,16 @@ immediately, regardless of whether the server is in select() or accept() or not.
 
 A workaround for this issue may be to keep the socket blocking until after connect().
 
+The new minimal example program is called 'rapid_connects'.
+
+The server is run like before as:
+
+   $ ./rapid_connects server
+
+The client can be run in two different modes. To connect with just one socket:
+
+   $ ./rapid_connects client1
+
+To connect with two:
+
+   $ ./rapid_connects client2
