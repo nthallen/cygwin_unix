@@ -62,12 +62,12 @@ The new minimal example program is called 'rapid_connects'.
 
 The server is run like before as:
 
-   $ ./rapid_connects server
+```$ ./rapid_connects server```
 
 The client can be run in two different modes. To connect with just one socket:
 
-   $ ./rapid_connects client1
+```$ ./rapid_connects client1```
 
 To connect with two:
 
-   $ ./rapid_connects client2
+```$ ./rapid_connects client2```
